@@ -6,6 +6,7 @@ import type { WriteStream } from "node:fs";
 export interface LocalLoggerOptions {
   rootDir: string;
   warn?: (message: string, error: unknown) => void;
+  maxChunkBytes?: number;
 }
 
 export interface LogRecord {
@@ -16,11 +17,13 @@ export interface LogRecord {
 export class LocalLogger {
   private readonly rootDir: string;
   private readonly warn: (message: string, error: unknown) => void;
+  private readonly maxChunkBytes: number;
   private readonly files = new Map<string, BufferedLogFile>();
 
   constructor(options: LocalLoggerOptions) {
     this.rootDir = options.rootDir;
     this.warn = options.warn ?? ((message, error) => console.error(message, error));
+    this.maxChunkBytes = options.maxChunkBytes ?? 1024 * 1024;
   }
 
   game(gameId: string, record: LogRecord): void {
@@ -67,7 +70,7 @@ export class LocalLogger {
     }
 
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const file = new BufferedLogFile(filePath, this.warn);
+    const file = new BufferedLogFile(filePath, this.warn, this.maxChunkBytes);
     this.files.set(filePath, file);
     return file;
   }
@@ -76,13 +79,15 @@ export class LocalLogger {
 class BufferedLogFile {
   private readonly stream: WriteStream;
   private readonly warn: (message: string, error: unknown) => void;
+  private readonly maxChunkBytes: number;
   private readonly queue: PendingLogRecord[] = [];
   private flushing: Promise<void> | null = null;
   private scheduled = false;
   private closed = false;
 
-  constructor(filePath: string, warn: (message: string, error: unknown) => void) {
+  constructor(filePath: string, warn: (message: string, error: unknown) => void, maxChunkBytes: number) {
     this.warn = warn;
+    this.maxChunkBytes = maxChunkBytes;
     this.stream = fs.createWriteStream(filePath, { flags: "a", encoding: "utf8" });
     this.stream.on("error", (error) => this.warn(`Failed to write local log stream to ${filePath}.`, error));
   }
@@ -138,10 +143,7 @@ class BufferedLogFile {
 
   private async drainQueue(): Promise<void> {
     while (this.queue.length > 0 && !this.closed) {
-      const chunk = this.queue
-        .splice(0, this.queue.length)
-        .map(({ ts, defaults, record }) => `${JSON.stringify({ ts, ...defaults, ...record })}\n`)
-        .join("");
+      const chunk = this.nextChunk();
       await new Promise<void>((resolve, reject) => {
         this.stream.write(chunk, (error) => {
           if (error) {
@@ -152,6 +154,26 @@ class BufferedLogFile {
         });
       }).catch((error: unknown) => this.warn("Failed to flush local log stream.", error));
     }
+  }
+
+  private nextChunk(): string {
+    const lines: string[] = [];
+    let bytes = 0;
+    let recordsToRemove = 0;
+
+    for (const { ts, defaults, record } of this.queue) {
+      const line = `${JSON.stringify({ ts, ...defaults, ...record })}\n`;
+      const lineBytes = Buffer.byteLength(line);
+      if (lines.length > 0 && bytes + lineBytes > this.maxChunkBytes) {
+        break;
+      }
+      lines.push(line);
+      bytes += lineBytes;
+      recordsToRemove += 1;
+    }
+
+    this.queue.splice(0, recordsToRemove);
+    return lines.join("");
   }
 }
 

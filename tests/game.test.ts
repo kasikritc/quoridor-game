@@ -36,6 +36,42 @@ describe("Quoridor rules", () => {
     expect(getLegalMoves(game, "p1")).toContainEqual({ row: 2, col: 4 });
   });
 
+  it("allows the late-game horizontal hop from the manual trace", () => {
+    const game = deterministicGame();
+    game.activePlayer = "p1";
+    game.players.p1.position = { row: 5, col: 6 };
+    game.players.p1.wallsRemaining = 0;
+    game.players.p2.position = { row: 5, col: 7 };
+    game.players.p2.wallsRemaining = 0;
+    game.walls = [
+      { orientation: "horizontal", row: 2, col: 4 },
+      { orientation: "horizontal", row: 2, col: 2 },
+      { orientation: "horizontal", row: 0, col: 5 },
+      { orientation: "vertical", row: 3, col: 4 },
+      { orientation: "horizontal", row: 0, col: 0 },
+      { orientation: "horizontal", row: 4, col: 2 },
+      { orientation: "vertical", row: 5, col: 4 },
+      { orientation: "horizontal", row: 4, col: 4 },
+      { orientation: "horizontal", row: 2, col: 0 },
+      { orientation: "vertical", row: 1, col: 3 },
+      { orientation: "vertical", row: 0, col: 2 },
+      { orientation: "vertical", row: 0, col: 4 },
+      { orientation: "vertical", row: 4, col: 1 },
+      { orientation: "horizontal", row: 3, col: 1 },
+      { orientation: "vertical", row: 6, col: 1 },
+      { orientation: "vertical", row: 2, col: 5 },
+      { orientation: "horizontal", row: 0, col: 7 },
+      { orientation: "horizontal", row: 4, col: 6 },
+      { orientation: "vertical", row: 3, col: 7 },
+      { orientation: "horizontal", row: 5, col: 7 }
+    ];
+
+    expect(getLegalMoves(game, "p1")).toContainEqual({ row: 5, col: 8 });
+
+    const result = applyAction(game, { type: "move", to: { row: 5, col: 8 } });
+    expect(result.ok).toBe(true);
+  });
+
   it("allows side moves when the straight jump is blocked", () => {
     const game = deterministicGame();
     game.activePlayer = "p1";

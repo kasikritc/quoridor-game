@@ -46,6 +46,22 @@ describe("LocalLogger", () => {
     expect(searchRecords[searchRecords.length - 1]).toMatchObject({ type: "node_action_score", index: 9_999 });
   });
 
+  it("flushes oversized bursts in bounded chunks", async () => {
+    const rootDir = tempDir();
+    const logger = new LocalLogger({ rootDir, maxChunkBytes: 256 });
+
+    for (let index = 0; index < 100; index += 1) {
+      logger.search("game-1", "turn-1", { type: "node_action_score", index, payload: "x".repeat(100) });
+    }
+
+    await logger.close();
+
+    const searchRecords = readJsonl(path.join(rootDir, "search", "game-1", "turn-1.jsonl"));
+    expect(searchRecords).toHaveLength(100);
+    expect(searchRecords[0]).toMatchObject({ type: "node_action_score", index: 0 });
+    expect(searchRecords[searchRecords.length - 1]).toMatchObject({ type: "node_action_score", index: 99 });
+  });
+
   it("writes search sink records with shared defaults", async () => {
     const rootDir = tempDir();
     const logger = new LocalLogger({ rootDir });
