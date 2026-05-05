@@ -264,7 +264,10 @@ function negamax(state: GameState, depth: number, alpha: number, beta: number, c
 }
 
 function orderActions(state: GameState, actions: GameAction[], context: SearchContext, preferredAction: GameAction | null = null): GameAction[] {
-  return [...actions].sort((a, b) => actionPriority(state, b, context, preferredAction) - actionPriority(state, a, context, preferredAction));
+  return actions
+    .map((action) => ({ action, priority: actionPriority(state, action, context, preferredAction) }))
+    .sort((a, b) => b.priority - a.priority || actionKey(a.action).localeCompare(actionKey(b.action)))
+    .map((entry) => entry.action);
 }
 
 function actionPriority(state: GameState, action: GameAction, context: SearchContext, preferredAction: GameAction | null): number {

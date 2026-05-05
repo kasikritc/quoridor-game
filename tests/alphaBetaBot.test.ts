@@ -94,6 +94,15 @@ describe("Alpha-beta bot", () => {
     expect(applyAction(game, action as GameAction).ok).toBe(true);
   });
 
+  it("chooses deterministically when action priorities tie", () => {
+    const game = deterministicGame();
+
+    const first = chooseAlphaBetaAction(game, { maxDepth: 1, timeBudgetMs: 1_000 });
+    const second = chooseAlphaBetaAction(game, { maxDepth: 1, timeBudgetMs: 1_000 });
+
+    expect(second).toEqual(first);
+  });
+
   it("returns a legal fallback action with a tiny time budget", () => {
     const game = deterministicGame();
 
