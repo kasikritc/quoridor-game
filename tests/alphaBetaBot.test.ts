@@ -214,6 +214,32 @@ describe("Alpha-beta bot", () => {
 
     expect(action).toEqual({ type: "move", to: { row: 8, col: 3 } });
   });
+
+  it("emits factual search trace events", () => {
+    const game = deterministicGame();
+    const events: Array<{ type: string }> = [];
+
+    const action = chooseAlphaBetaAction(game, {
+      maxDepth: 1,
+      timeBudgetMs: 1_000,
+      trace: (event) => events.push({ type: event.type })
+    });
+
+    expect(action).not.toBeNull();
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "search_start",
+        "iterative_depth_start",
+        "root_node_enter",
+        "action_order",
+        "root_action_explore",
+        "evaluate",
+        "root_action_score",
+        "transposition_store",
+        "search_complete"
+      ])
+    );
+  });
 });
 
 function deterministicGame(): GameState {
