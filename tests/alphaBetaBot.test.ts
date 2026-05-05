@@ -159,6 +159,26 @@ describe("Alpha-beta bot", () => {
 
     expect(action).toEqual({ type: "move", to: { row: 8, col: 4 } });
   });
+
+  it("does not spend an opening wall when pawn progress is better", () => {
+    const game = deterministicGame();
+    game.activePlayer = "p2";
+
+    const action = chooseAlphaBetaAction(game, { maxDepth: 1, timeBudgetMs: 1_000 });
+
+    expect(action).toEqual({ type: "move", to: { row: 1, col: 4 } });
+  });
+
+  it("still chooses a wall when it clearly delays the opponent", () => {
+    const game = deterministicGame();
+    game.activePlayer = "p2";
+    game.players.p1.position = { row: 1, col: 4 };
+    game.players.p2.position = { row: 4, col: 4 };
+
+    const action = chooseAlphaBetaAction(game, { maxDepth: 1, timeBudgetMs: 1_000 });
+
+    expect(action).toEqual({ type: "wall", wall: { row: 0, col: 3, orientation: "horizontal" } });
+  });
 });
 
 function deterministicGame(): GameState {

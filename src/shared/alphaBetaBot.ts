@@ -9,6 +9,9 @@ const DIRS: Position[] = [
 ];
 
 const WIN_SCORE = 10_000;
+const WALL_TEMPO_COST = 2;
+const WALL_COUNT_WEIGHT = 0.25;
+const GOAL_URGENCY_WEIGHT = 2;
 export const DEFAULT_TIME_BUDGET_MS = 5_000;
 
 export interface AlphaBetaOptions {
@@ -163,7 +166,16 @@ function evaluateStateWithContext(state: GameState, playerId: PlayerId, context?
     return WIN_SCORE;
   }
 
-  return opponentDistance - myDistance;
+  return (
+    opponentDistance -
+    myDistance +
+    (goalUrgency(myDistance) - goalUrgency(opponentDistance)) * GOAL_URGENCY_WEIGHT +
+    (state.players[playerId].wallsRemaining - state.players[opponentId].wallsRemaining) * WALL_COUNT_WEIGHT
+  );
+}
+
+function goalUrgency(distance: number): number {
+  return Math.max(0, 3 - distance);
 }
 
 function searchRoot(state: GameState, depth: number, context: SearchContext): SearchResult {
@@ -293,7 +305,12 @@ function actionPriority(state: GameState, action: GameAction, context: SearchCon
   const opponentId = otherPlayer(state.activePlayer);
   const before = cachedShortestPathLength(state, opponentId, context) ?? 0;
   const after = cachedShortestPathLength(result.state, opponentId, context) ?? 0;
-  return 10 + (after - before);
+  const myBefore = cachedShortestPathLength(state, state.activePlayer, context) ?? BOARD_SIZE * BOARD_SIZE;
+  const myAfter = cachedShortestPathLength(result.state, state.activePlayer, context) ?? BOARD_SIZE * BOARD_SIZE;
+  const opponentDelay = after - before;
+  const selfDelay = myAfter - myBefore;
+  const urgentBlockBonus = before <= 2 && opponentDelay > 0 ? 20 : 0;
+  return 10 + urgentBlockBonus + opponentDelay * 3 - selfDelay * 2 - WALL_TEMPO_COST;
 }
 
 function createSearchContext(options: ReturnType<typeof resolveAlphaBetaOptions>): SearchContext {
