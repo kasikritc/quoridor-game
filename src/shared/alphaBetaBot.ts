@@ -204,7 +204,11 @@ function negamax(state: GameState, depth: number, alpha: number, beta: number, c
     return { action: null, score: 0, timedOut: true };
   }
 
-  if (depth === 0 || state.status === "finished") {
+  if (state.status === "finished") {
+    return { action: null, score: state.winner === state.activePlayer ? -WIN_SCORE : WIN_SCORE, timedOut: false };
+  }
+
+  if (depth === 0) {
     return { action: null, score: evaluateStateWithContext(state, state.activePlayer, context), timedOut: false };
   }
 

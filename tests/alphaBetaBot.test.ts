@@ -102,6 +102,41 @@ describe("Alpha-beta bot", () => {
     expect(action).not.toBeNull();
     expect(applyAction(game, action as GameAction).ok).toBe(true);
   });
+
+  it("takes an immediate winning move", () => {
+    const game = deterministicGame();
+    game.activePlayer = "p2";
+    game.players.p1.position = { row: 1, col: 0 };
+    game.players.p2.position = { row: 7, col: 2 };
+    game.players.p1.wallsRemaining = 0;
+    game.players.p2.wallsRemaining = 0;
+    game.walls = [
+      { orientation: "horizontal", row: 4, col: 4 },
+      { row: 0, col: 5, orientation: "horizontal" },
+      { row: 0, col: 7, orientation: "horizontal" },
+      { row: 0, col: 3, orientation: "horizontal" },
+      { row: 0, col: 1, orientation: "horizontal" },
+      { orientation: "horizontal", row: 5, col: 3 },
+      { orientation: "horizontal", row: 5, col: 1 },
+      { orientation: "vertical", row: 4, col: 3 },
+      { orientation: "vertical", row: 4, col: 0 },
+      { orientation: "horizontal", row: 4, col: 6 },
+      { orientation: "vertical", row: 3, col: 7 },
+      { row: 1, col: 0, orientation: "vertical" },
+      { orientation: "horizontal", row: 2, col: 7 },
+      { row: 2, col: 1, orientation: "horizontal" },
+      { row: 2, col: 3, orientation: "horizontal" },
+      { row: 2, col: 4, orientation: "vertical" },
+      { row: 1, col: 5, orientation: "horizontal" },
+      { row: 3, col: 1, orientation: "vertical" },
+      { orientation: "horizontal", row: 7, col: 0 },
+      { orientation: "vertical", row: 7, col: 1 }
+    ];
+
+    const action = chooseAlphaBetaAction(game, { maxDepth: 2, timeBudgetMs: 1_000 });
+
+    expect(action).toEqual({ type: "move", to: { row: 8, col: 2 } });
+  });
 });
 
 function deterministicGame(): GameState {
