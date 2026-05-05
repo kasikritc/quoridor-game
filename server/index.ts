@@ -37,9 +37,10 @@ app.post("/api/bots/alpha-beta/action", (req, res) => {
   const options = resolveAlphaBetaRequestOptions(req.body);
   const searchLogName = searchLogNameFor(game.id, nextTurnNumber(game.id));
   logger.game(game.id, { type: "standalone_bot_action_requested", botId: "alpha-beta", options, searchLog: searchLogName, state: summarizeState(game) });
+  const trace = logger.searchSink(game.id, searchLogName, { gameId: game.id, botId: "alpha-beta" });
   const action = chooseAlphaBetaAction(game, {
     ...options,
-    trace: (event) => logger.search(game.id, searchLogName, { ...event, gameId: game.id, botId: "alpha-beta" })
+    trace
   });
   if (!action) {
     logger.game(game.id, { type: "standalone_bot_action_failed", botId: "alpha-beta", searchLog: searchLogName });
@@ -161,6 +162,12 @@ app.listen(port, () => {
   console.log(`Quoridor API listening on http://127.0.0.1:${port}`);
 });
 
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void logger.close().finally(() => process.exit(0));
+  });
+}
+
 async function discoverBots(): Promise<BotManifest[]> {
   let entries;
   try {
@@ -265,9 +272,10 @@ function parsePositiveInteger(input: string | undefined): number | null {
 
 async function requestBotAction(bot: BotManifest, state: GameState, options: ReturnType<typeof resolveAlphaBetaOptions>, searchLog: string): Promise<GameAction | null> {
   if (bot.id === "alpha-beta") {
+    const trace = logger.searchSink(state.id, searchLog, { gameId: state.id, botId: bot.id });
     return chooseAlphaBetaAction(state, {
       ...options,
-      trace: (event) => logger.search(state.id, searchLog, { ...event, gameId: state.id, botId: bot.id })
+      trace
     });
   }
 
