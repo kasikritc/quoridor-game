@@ -11,6 +11,8 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [game, setGame] = useState<GameState | null>(null);
   const [bots, setBots] = useState<BotManifest[]>([]);
+  const [selectedBot, setSelectedBot] = useState<BotManifest | null>(null);
+  const [botErrorGameId, setBotErrorGameId] = useState<string | null>(null);
   const [botsLoading, setBotsLoading] = useState(false);
   const [message, setMessage] = useState("Choose a mode to start.");
   const [hoverCell, setHoverCell] = useState<Position | null>(null);
@@ -28,6 +30,7 @@ export function App() {
   const legalMoveKeys = useMemo(() => new Set(legalMoves.map(positionKey)), [legalMoves]);
 
   const current = game ? game.players[game.activePlayer] : null;
+  const isBotTurn = game?.mode === "bot" && game.activePlayer === "p2" && game.status === "playing";
 
   useEffect(() => {
     if (!invalidMoveFeedback) {
@@ -38,8 +41,19 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [invalidMoveFeedback]);
 
+  useEffect(() => {
+    if (!game || !selectedBot || !isBotTurn || submitting || botErrorGameId === game.id) {
+      return;
+    }
+
+    void submitBotAction(game.id, selectedBot.id);
+  }, [game, selectedBot, isBotTurn, submitting, botErrorGameId]);
+
   async function start(mode: GameMode) {
     setMessage(mode === "bot" ? "Loading installed bots." : "Starting local game.");
+    if (mode === "local") {
+      setSelectedBot(null);
+    }
     if (mode === "bot") {
       setScreen("bots");
       setBotsLoading(true);
@@ -47,7 +61,7 @@ export function App() {
         const response = await fetch("/api/bots");
         const data = (await response.json()) as { bots?: BotManifest[] };
         setBots(data.bots ?? []);
-        setMessage((data.bots ?? []).length > 0 ? "Pick a bot to inspect. Bot play is ready for the server bridge next." : "No bots found in bots/<bot-id>/bot.json.");
+        setMessage((data.bots ?? []).length > 0 ? "Pick a bot to play." : "No bots found in bots/<bot-id>/bot.json.");
       } catch {
         setBots([]);
         setMessage("Could not reach the bot registry.");
@@ -60,8 +74,9 @@ export function App() {
     await createServerGame("local");
   }
 
-  async function startBotPreview() {
-    await createServerGame("bot", "Bot mode is using local turns until a bot server is connected.");
+  async function startBotGame(bot: BotManifest) {
+    setSelectedBot(bot);
+    await createServerGame("bot", `Playing against ${bot.name}.`);
   }
 
   async function resetGame() {
@@ -86,6 +101,7 @@ export function App() {
       }
       const data = (await response.json()) as { game: GameState };
       setGame(data.game);
+      setBotErrorGameId(null);
       setHoverCell(null);
       setHoverWall(null);
       setScreen("game");
@@ -116,6 +132,7 @@ export function App() {
       }
 
       setGame(result.state);
+      setBotErrorGameId(null);
       setHoverCell(null);
       setHoverWall(null);
       setInvalidMoveFeedback(null);
@@ -131,8 +148,42 @@ export function App() {
     }
   }
 
+  async function submitBotAction(gameId: string, botId: string) {
+    setSubmitting(true);
+    setBotErrorGameId(null);
+    setMessage(`${selectedBot?.name ?? "Bot"} is thinking.`);
+    try {
+      const response = await fetch(`/api/games/${gameId}/bot-actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ botId })
+      });
+      const result = (await response.json()) as { ok?: boolean; state?: GameState; error?: string };
+      if (!response.ok || !result.ok || !result.state) {
+        setMessage(result.error ?? "The bot could not move.");
+        setBotErrorGameId(gameId);
+        return;
+      }
+
+      setGame(result.state);
+      setHoverCell(null);
+      setHoverWall(null);
+      setInvalidMoveFeedback(null);
+      if (result.state.status === "finished" && result.state.winner) {
+        setMessage(`${result.state.players[result.state.winner].name} wins.`);
+      } else {
+        setMessage(`${result.state.players[result.state.activePlayer].name}'s turn.`);
+      }
+    } catch {
+      setMessage("Could not request a bot action.");
+      setBotErrorGameId(gameId);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function onCellClick(position: Position) {
-    if (!game || game.status !== "playing") {
+    if (!game || game.status !== "playing" || isBotTurn) {
       return;
     }
 
@@ -146,7 +197,7 @@ export function App() {
   }
 
   function onWallClick(wall: Wall) {
-    if (!game || game.status !== "playing") {
+    if (!game || game.status !== "playing" || isBotTurn) {
       return;
     }
 
@@ -188,7 +239,7 @@ export function App() {
             <p className="eyebrow">Bot registry</p>
             <h1>Installed bots</h1>
           </div>
-          <button className="primary-button" onClick={() => void startBotPreview()} disabled={submitting}>Open board</button>
+          <button className="primary-button" onClick={() => bots[0] && void startBotGame(bots[0])} disabled={submitting || bots.length === 0}>Play first bot</button>
         </header>
         <section className="bot-list">
           {botsLoading ? <p className="empty">Scanning bots...</p> : null}
@@ -201,6 +252,7 @@ export function App() {
                 <p>{bot.description || "No description provided."}</p>
                 <span>{bot.version} · {bot.endpoint}</span>
               </div>
+              <button className="primary-button" onClick={() => void startBotGame(bot)} disabled={submitting}>Play</button>
             </article>
           ))}
         </section>
@@ -283,7 +335,7 @@ export function App() {
                   onBlur={() => setHoverCell(null)}
                   onClick={() => onCellClick(position)}
                   aria-label={`${files[col]}${BOARD_SIZE - row}${isLegal ? ", legal move" : ""}`}
-                  disabled={submitting || game.status === "finished"}
+                  disabled={submitting || isBotTurn || game.status === "finished"}
                 >
                   {occupant ? <span className={`pawn ${occupant.id}`}>{occupant.id === "p1" ? "B" : "G"}</span> : null}
                 </button>
@@ -308,7 +360,7 @@ export function App() {
                 onBlur={() => setHoverWall(null)}
                 onClick={() => onWallClick({ row, col, orientation: "horizontal" })}
                 aria-label={`Horizontal wall ${row + 1}, ${col + 1}`}
-                disabled={submitting || game.status === "finished"}
+                disabled={submitting || isBotTurn || game.status === "finished"}
               />
             ))
           )}
@@ -330,7 +382,7 @@ export function App() {
                 onBlur={() => setHoverWall(null)}
                 onClick={() => onWallClick({ row, col, orientation: "vertical" })}
                 aria-label={`Vertical wall ${row + 1}, ${col + 1}`}
-                disabled={submitting || game.status === "finished"}
+                disabled={submitting || isBotTurn || game.status === "finished"}
               />
             ))
           )}

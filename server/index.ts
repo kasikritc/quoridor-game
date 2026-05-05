@@ -2,6 +2,7 @@ import express from "express";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_TIME_BUDGET_MS, chooseAlphaBetaAction, resolveAlphaBetaOptions } from "../src/shared/alphaBetaBot";
 import { applyAction, createGame, getLegalMoves, normalizePosition, normalizeWall } from "../src/shared/game";
 import type { BotManifest, GameAction, GameMode, GameState } from "../src/shared/types";
 
@@ -11,6 +12,7 @@ const rootDir = path.resolve(__dirname, "..");
 const botsDir = path.join(rootDir, "bots");
 const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT ?? 8787);
+const defaultAlphaBetaTimeBudgetMs = parsePositiveInteger(process.env.ALPHA_BETA_TIME_BUDGET_MS) ?? DEFAULT_TIME_BUDGET_MS;
 
 const app = express();
 const games = new Map<string, GameState>();
@@ -20,6 +22,23 @@ app.use(express.json());
 app.get("/api/bots", async (_req, res) => {
   const bots = await discoverBots();
   res.json({ bots });
+});
+
+app.post("/api/bots/alpha-beta/action", (req, res) => {
+  const game = normalizeGameState(req.body?.state);
+  if (!game) {
+    res.status(400).json({ error: "Invalid bot state payload." });
+    return;
+  }
+
+  const options = resolveAlphaBetaRequestOptions(req.body);
+  const action = chooseAlphaBetaAction(game, options);
+  if (!action) {
+    res.status(422).json({ error: "Bot could not find a legal action." });
+    return;
+  }
+
+  res.json({ action });
 });
 
 app.post("/api/games", (req, res) => {
@@ -60,6 +79,41 @@ app.post("/api/games/:id/actions", (req, res) => {
 
   games.set(result.state.id, result.state);
   res.json({ ...result, legalMoves: result.state.status === "playing" ? getLegalMoves(result.state, result.state.activePlayer) : [] });
+});
+
+app.post("/api/games/:id/bot-actions", async (req, res) => {
+  const game = games.get(req.params.id);
+  if (!game) {
+    res.status(404).json({ error: "Game not found." });
+    return;
+  }
+
+  if (game.status !== "playing") {
+    res.status(422).json({ error: "The game is already finished." });
+    return;
+  }
+
+  const botId = typeof req.body?.botId === "string" ? req.body.botId : "alpha-beta";
+  const bot = (await discoverBots()).find((candidate) => candidate.id === botId);
+  if (!bot) {
+    res.status(404).json({ error: "Bot not found." });
+    return;
+  }
+
+  const proposed = await requestBotAction(bot, game, resolveAlphaBetaRequestOptions(req.body));
+  if (!proposed) {
+    res.status(502).json({ error: "Bot did not return a valid action." });
+    return;
+  }
+
+  const result = applyAction(game, proposed);
+  if (!result.ok) {
+    res.status(422).json({ ...result, error: `Bot proposed an illegal action: ${result.error}` });
+    return;
+  }
+
+  games.set(result.state.id, result.state);
+  res.json({ ...result, action: proposed, legalMoves: result.state.status === "playing" ? getLegalMoves(result.state, result.state.activePlayer) : [] });
 });
 
 app.use(express.static(distDir));
@@ -138,4 +192,60 @@ function normalizeAction(input: unknown): GameAction | null {
   }
 
   return null;
+}
+
+function normalizeGameState(input: unknown): GameState | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const state = input as GameState;
+  if (
+    typeof state.id !== "string" ||
+    (state.mode !== "local" && state.mode !== "bot") ||
+    (state.activePlayer !== "p1" && state.activePlayer !== "p2") ||
+    (state.status !== "playing" && state.status !== "finished") ||
+    !state.players ||
+    !Array.isArray(state.walls)
+  ) {
+    return null;
+  }
+
+  return state;
+}
+
+function resolveAlphaBetaRequestOptions(input: unknown): ReturnType<typeof resolveAlphaBetaOptions> {
+  const body = input && typeof input === "object" ? (input as { maxDepth?: unknown; timeBudgetMs?: unknown }) : {};
+  return resolveAlphaBetaOptions({
+    maxDepth: typeof body.maxDepth === "number" ? body.maxDepth : undefined,
+    timeBudgetMs: typeof body.timeBudgetMs === "number" ? body.timeBudgetMs : defaultAlphaBetaTimeBudgetMs
+  });
+}
+
+function parsePositiveInteger(input: string | undefined): number | null {
+  if (!input) {
+    return null;
+  }
+
+  const value = Number(input);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+}
+
+async function requestBotAction(bot: BotManifest, state: GameState, options: ReturnType<typeof resolveAlphaBetaOptions>): Promise<GameAction | null> {
+  if (bot.id === "alpha-beta") {
+    return chooseAlphaBetaAction(state, options);
+  }
+
+  const url = bot.endpoint.startsWith("/") ? `http://127.0.0.1:${port}${bot.endpoint}` : bot.endpoint;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state, maxDepth: options.maxDepth, timeBudgetMs: options.timeBudgetMs })
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as { action?: unknown };
+  return normalizeAction(payload.action);
 }
