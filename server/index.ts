@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_TIME_BUDGET_MS, chooseAlphaBetaAction, resolveAlphaBetaOptions } from "../src/shared/alphaBetaBot";
 import { applyAction, createGame, getLegalMoves, normalizePosition, normalizeWall } from "../src/shared/game";
 import type { BotManifest, GameAction, GameMode, GameState } from "../src/shared/types";
+import { LocalLogger } from "./localLogger";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,9 +14,11 @@ const botsDir = path.join(rootDir, "bots");
 const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT ?? 8787);
 const defaultAlphaBetaTimeBudgetMs = parsePositiveInteger(process.env.ALPHA_BETA_TIME_BUDGET_MS) ?? DEFAULT_TIME_BUDGET_MS;
+const logger = new LocalLogger({ rootDir: process.env.QUORIDOR_LOG_DIR ?? path.join(rootDir, "logs") });
 
 const app = express();
 const games = new Map<string, GameState>();
+const turnCounts = new Map<string, number>();
 
 app.use(express.json());
 
@@ -32,12 +35,20 @@ app.post("/api/bots/alpha-beta/action", (req, res) => {
   }
 
   const options = resolveAlphaBetaRequestOptions(req.body);
-  const action = chooseAlphaBetaAction(game, options);
+  const searchLogName = searchLogNameFor(game.id, nextTurnNumber(game.id));
+  logger.game(game.id, { type: "standalone_bot_action_requested", botId: "alpha-beta", options, searchLog: searchLogName, state: summarizeState(game) });
+  const trace = logger.searchSink(game.id, searchLogName, { gameId: game.id, botId: "alpha-beta" });
+  const action = chooseAlphaBetaAction(game, {
+    ...options,
+    trace
+  });
   if (!action) {
+    logger.game(game.id, { type: "standalone_bot_action_failed", botId: "alpha-beta", searchLog: searchLogName });
     res.status(422).json({ error: "Bot could not find a legal action." });
     return;
   }
 
+  logger.game(game.id, { type: "standalone_bot_action_selected", botId: "alpha-beta", action, searchLog: searchLogName });
   res.json({ action });
 });
 
@@ -45,6 +56,8 @@ app.post("/api/games", (req, res) => {
   const mode = req.body?.mode === "bot" ? "bot" : ("local" satisfies GameMode);
   const game = createGame(mode);
   games.set(game.id, game);
+  turnCounts.set(game.id, 0);
+  logger.game(game.id, { type: "game_created", mode, state: summarizeState(game) });
   res.status(201).json({ game });
 });
 
@@ -71,12 +84,19 @@ app.post("/api/games/:id/actions", (req, res) => {
     return;
   }
 
+  const before = summarizeState(game);
   const result = applyAction(game, action);
   if (!result.ok) {
+    logger.game(game.id, { type: "human_action_rejected", actor: game.activePlayer, action, before, error: result.error });
     res.status(422).json(result);
     return;
   }
 
+  incrementTurn(result.state.id);
+  logger.game(result.state.id, { type: "human_action_applied", actor: game.activePlayer, action, before, after: summarizeState(result.state), status: result.state.status, winner: result.state.winner });
+  if (result.state.status === "finished") {
+    logger.game(result.state.id, { type: "game_finished", winner: result.state.winner, finalState: summarizeState(result.state) });
+  }
   games.set(result.state.id, result.state);
   res.json({ ...result, legalMoves: result.state.status === "playing" ? getLegalMoves(result.state, result.state.activePlayer) : [] });
 });
@@ -100,18 +120,31 @@ app.post("/api/games/:id/bot-actions", async (req, res) => {
     return;
   }
 
-  const proposed = await requestBotAction(bot, game, resolveAlphaBetaRequestOptions(req.body));
+  const before = summarizeState(game);
+  const turn = nextTurnNumber(game.id);
+  const searchLog = searchLogNameFor(game.id, turn);
+  const options = resolveAlphaBetaRequestOptions(req.body);
+  logger.game(game.id, { type: "bot_action_requested", botId, actor: game.activePlayer, options, before, searchLog });
+
+  const proposed = await requestBotAction(bot, game, options, searchLog);
   if (!proposed) {
+    logger.game(game.id, { type: "bot_action_failed", botId, actor: game.activePlayer, searchLog });
     res.status(502).json({ error: "Bot did not return a valid action." });
     return;
   }
 
   const result = applyAction(game, proposed);
   if (!result.ok) {
+    logger.game(game.id, { type: "bot_action_rejected", botId, actor: game.activePlayer, action: proposed, before, error: result.error, searchLog });
     res.status(422).json({ ...result, error: `Bot proposed an illegal action: ${result.error}` });
     return;
   }
 
+  incrementTurn(result.state.id);
+  logger.game(result.state.id, { type: "bot_action_applied", botId, actor: game.activePlayer, action: proposed, before, after: summarizeState(result.state), status: result.state.status, winner: result.state.winner, searchLog });
+  if (result.state.status === "finished") {
+    logger.game(result.state.id, { type: "game_finished", winner: result.state.winner, finalState: summarizeState(result.state) });
+  }
   games.set(result.state.id, result.state);
   res.json({ ...result, action: proposed, legalMoves: result.state.status === "playing" ? getLegalMoves(result.state, result.state.activePlayer) : [] });
 });
@@ -128,6 +161,12 @@ app.get("*", (_req, res, next) => {
 app.listen(port, () => {
   console.log(`Quoridor API listening on http://127.0.0.1:${port}`);
 });
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void logger.close().finally(() => process.exit(0));
+  });
+}
 
 async function discoverBots(): Promise<BotManifest[]> {
   let entries;
@@ -231,9 +270,13 @@ function parsePositiveInteger(input: string | undefined): number | null {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
 }
 
-async function requestBotAction(bot: BotManifest, state: GameState, options: ReturnType<typeof resolveAlphaBetaOptions>): Promise<GameAction | null> {
+async function requestBotAction(bot: BotManifest, state: GameState, options: ReturnType<typeof resolveAlphaBetaOptions>, searchLog: string): Promise<GameAction | null> {
   if (bot.id === "alpha-beta") {
-    return chooseAlphaBetaAction(state, options);
+    const trace = logger.searchSink(state.id, searchLog, { gameId: state.id, botId: bot.id });
+    return chooseAlphaBetaAction(state, {
+      ...options,
+      trace
+    });
   }
 
   const url = bot.endpoint.startsWith("/") ? `http://127.0.0.1:${port}${bot.endpoint}` : bot.endpoint;
@@ -248,4 +291,39 @@ async function requestBotAction(bot: BotManifest, state: GameState, options: Ret
 
   const payload = (await response.json()) as { action?: unknown };
   return normalizeAction(payload.action);
+}
+
+function summarizeState(state: GameState): Record<string, unknown> {
+  return {
+    id: state.id,
+    mode: state.mode,
+    activePlayer: state.activePlayer,
+    status: state.status,
+    winner: state.winner,
+    players: {
+      p1: {
+        position: state.players.p1.position,
+        wallsRemaining: state.players.p1.wallsRemaining,
+        goalRow: state.players.p1.goalRow
+      },
+      p2: {
+        position: state.players.p2.position,
+        wallsRemaining: state.players.p2.wallsRemaining,
+        goalRow: state.players.p2.goalRow
+      }
+    },
+    walls: state.walls
+  };
+}
+
+function nextTurnNumber(gameId: string): number {
+  return (turnCounts.get(gameId) ?? 0) + 1;
+}
+
+function incrementTurn(gameId: string): void {
+  turnCounts.set(gameId, nextTurnNumber(gameId));
+}
+
+function searchLogNameFor(gameId: string, turn: number): string {
+  return `${String(turn).padStart(3, "0")}-${Date.now()}-${gameId}`;
 }

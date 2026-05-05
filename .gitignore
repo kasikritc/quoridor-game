@@ -1,4 +1,5 @@
 # Dependencies
+node_modules
 node_modules/
 
 # Build output
@@ -11,7 +12,9 @@ coverage/
 !.env.example
 
 # Logs
+logs/
 *.log
+*.jsonl
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
