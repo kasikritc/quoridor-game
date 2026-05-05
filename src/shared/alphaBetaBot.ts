@@ -12,6 +12,7 @@ const WIN_SCORE = 10_000;
 const WALL_TEMPO_COST = 2;
 const WALL_COUNT_WEIGHT = 0.25;
 const GOAL_URGENCY_WEIGHT = 2;
+const REPETITION_PENALTY = 25;
 export const DEFAULT_TIME_BUDGET_MS = 5_000;
 
 export interface AlphaBetaOptions {
@@ -194,7 +195,8 @@ function searchRoot(state: GameState, depth: number, context: SearchContext): Se
       continue;
     }
 
-    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context, 1);
+    const line = new Set<string>([stateKey(state), stateKey(child.state)]);
+    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context, 1, line);
     if (childResult.timedOut) {
       return { action: null, score: bestScore, timedOut: true };
     }
@@ -211,7 +213,7 @@ function searchRoot(state: GameState, depth: number, context: SearchContext): Se
   return { action: bestAction, score: bestScore, timedOut: false };
 }
 
-function negamax(state: GameState, depth: number, alpha: number, beta: number, context: SearchContext, plyFromRoot: number): SearchResult {
+function negamax(state: GameState, depth: number, alpha: number, beta: number, context: SearchContext, plyFromRoot: number, line: Set<string>): SearchResult {
   if (isTimedOut(context)) {
     return { action: null, score: 0, timedOut: true };
   }
@@ -253,7 +255,10 @@ function negamax(state: GameState, depth: number, alpha: number, beta: number, c
       continue;
     }
 
-    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context, plyFromRoot + 1);
+    const childKey = stateKey(child.state);
+    const childResult = line.has(childKey)
+      ? { action: null, score: REPETITION_PENALTY, timedOut: false }
+      : withLineState(line, childKey, () => negamax(child.state, depth - 1, -beta, -alpha, context, plyFromRoot + 1, line));
     if (childResult.timedOut) {
       return { action: null, score: best, timedOut: true };
     }
@@ -311,6 +316,15 @@ function actionPriority(state: GameState, action: GameAction, context: SearchCon
   const selfDelay = myAfter - myBefore;
   const urgentBlockBonus = before <= 2 && opponentDelay > 0 ? 20 : 0;
   return 10 + urgentBlockBonus + opponentDelay * 3 - selfDelay * 2 - WALL_TEMPO_COST;
+}
+
+function withLineState<T>(line: Set<string>, key: string, run: () => T): T {
+  line.add(key);
+  try {
+    return run();
+  } finally {
+    line.delete(key);
+  }
 }
 
 function createSearchContext(options: ReturnType<typeof resolveAlphaBetaOptions>): SearchContext {
