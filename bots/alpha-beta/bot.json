@@ -1,0 +1,7 @@
+{
+  "id": "alpha-beta",
+  "name": "Alpha-Beta Bot",
+  "version": "0.1.0",
+  "endpoint": "/api/bots/alpha-beta/action",
+  "description": "Shortest-path heuristic Quoridor bot using alpha-beta search with iterative deepening."
+}
