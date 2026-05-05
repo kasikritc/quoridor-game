@@ -182,7 +182,7 @@ function searchRoot(state: GameState, depth: number, context: SearchContext): Se
       continue;
     }
 
-    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context);
+    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context, 1);
     if (childResult.timedOut) {
       return { action: null, score: bestScore, timedOut: true };
     }
@@ -199,13 +199,13 @@ function searchRoot(state: GameState, depth: number, context: SearchContext): Se
   return { action: bestAction, score: bestScore, timedOut: false };
 }
 
-function negamax(state: GameState, depth: number, alpha: number, beta: number, context: SearchContext): SearchResult {
+function negamax(state: GameState, depth: number, alpha: number, beta: number, context: SearchContext, plyFromRoot: number): SearchResult {
   if (isTimedOut(context)) {
     return { action: null, score: 0, timedOut: true };
   }
 
   if (state.status === "finished") {
-    return { action: null, score: state.winner === state.activePlayer ? -WIN_SCORE : WIN_SCORE, timedOut: false };
+    return { action: null, score: state.winner === state.activePlayer ? -WIN_SCORE + plyFromRoot : WIN_SCORE - plyFromRoot, timedOut: false };
   }
 
   if (depth === 0) {
@@ -241,7 +241,7 @@ function negamax(state: GameState, depth: number, alpha: number, beta: number, c
       continue;
     }
 
-    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context);
+    const childResult = negamax(child.state, depth - 1, -beta, -alpha, context, plyFromRoot + 1);
     if (childResult.timedOut) {
       return { action: null, score: best, timedOut: true };
     }

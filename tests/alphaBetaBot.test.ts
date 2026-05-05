@@ -137,6 +137,19 @@ describe("Alpha-beta bot", () => {
 
     expect(action).toEqual({ type: "move", to: { row: 8, col: 2 } });
   });
+
+  it("keeps an immediate win preferred during deeper search", () => {
+    const game = deterministicGame();
+    game.activePlayer = "p2";
+    game.players.p1.position = { row: 5, col: 8 };
+    game.players.p2.position = { row: 7, col: 4 };
+    game.players.p1.wallsRemaining = 0;
+    game.players.p2.wallsRemaining = 0;
+
+    const action = chooseAlphaBetaAction(game, { maxDepth: 4, timeBudgetMs: 1_000 });
+
+    expect(action).toEqual({ type: "move", to: { row: 8, col: 4 } });
+  });
 });
 
 function deterministicGame(): GameState {
