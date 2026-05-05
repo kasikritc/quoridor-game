@@ -124,7 +124,7 @@ export function validateWallPlacement(state: GameState, wall: Wall): { ok: true 
     return { ok: false, error: "That wall is outside the valid wall grid." };
   }
 
-  if (state.walls.some((existing) => sameWall(existing, wall))) {
+  if (state.walls.some((existing) => wallsOverlap(existing, wall))) {
     return { ok: false, error: "That wall overlaps an existing wall." };
   }
 
@@ -219,8 +219,16 @@ function hasPathToGoal(start: Position, goalRow: number, walls: Wall[]): boolean
   return false;
 }
 
-function sameWall(a: Wall, b: Wall): boolean {
-  return a.orientation === b.orientation && a.row === b.row && a.col === b.col;
+function wallsOverlap(a: Wall, b: Wall): boolean {
+  if (a.orientation !== b.orientation) {
+    return false;
+  }
+
+  if (a.orientation === "horizontal") {
+    return a.row === b.row && Math.abs(a.col - b.col) <= 1;
+  }
+
+  return a.col === b.col && Math.abs(a.row - b.row) <= 1;
 }
 
 function wallsCross(a: Wall, b: Wall): boolean {

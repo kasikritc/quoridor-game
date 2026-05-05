@@ -55,7 +55,15 @@ describe("Quoridor rules", () => {
     game.walls = [{ row: 1, col: 1, orientation: "horizontal" }];
 
     expect(validateWallPlacement(game, { row: 1, col: 1, orientation: "horizontal" }).ok).toBe(false);
+    expect(validateWallPlacement(game, { row: 1, col: 0, orientation: "horizontal" }).ok).toBe(false);
+    expect(validateWallPlacement(game, { row: 1, col: 2, orientation: "horizontal" }).ok).toBe(false);
+    expect(validateWallPlacement(game, { row: 1, col: 3, orientation: "horizontal" }).ok).toBe(true);
     expect(validateWallPlacement(game, { row: 1, col: 1, orientation: "vertical" }).ok).toBe(false);
+
+    game.walls = [{ row: 1, col: 1, orientation: "vertical" }];
+    expect(validateWallPlacement(game, { row: 0, col: 1, orientation: "vertical" }).ok).toBe(false);
+    expect(validateWallPlacement(game, { row: 2, col: 1, orientation: "vertical" }).ok).toBe(false);
+    expect(validateWallPlacement(game, { row: 3, col: 1, orientation: "vertical" }).ok).toBe(true);
 
     const trapped = deterministicGame();
     trapped.activePlayer = "p1";
